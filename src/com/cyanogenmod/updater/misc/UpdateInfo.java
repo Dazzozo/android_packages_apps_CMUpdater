@@ -31,8 +31,8 @@ public class UpdateInfo implements Parcelable, Serializable {
 
     private String mUiName;
     private String mFileName;
+    private String mVersion;
     private Type mType;
-    private int mApiLevel;
     private long mBuildDate;
     private String mDownloadUrl;
     private String mMd5Sum;
@@ -40,11 +40,10 @@ public class UpdateInfo implements Parcelable, Serializable {
 
     private Boolean mIsNewerThanInstalled;
 
-    public UpdateInfo(String fileName, long date, int apiLevel, String url,
+    public UpdateInfo(String fileName, long date, String url,
             String md5, Type type, String changeLog) {
         initializeName(fileName);
         mBuildDate = date;
-        mApiLevel = apiLevel;
         mDownloadUrl = url;
         mMd5Sum = md5;
         mType = type;
@@ -52,7 +51,7 @@ public class UpdateInfo implements Parcelable, Serializable {
     }
 
     public UpdateInfo(String fileName, String changeLog) {
-        this(fileName, 0, 0, null, null, Type.UNKNOWN, changeLog);
+        this(fileName, 0, null, null, Type.UNKNOWN, changeLog);
     }
 
     private UpdateInfo(Parcel in) {
@@ -71,6 +70,13 @@ public class UpdateInfo implements Parcelable, Serializable {
      */
     public String getName() {
         return mUiName;
+    }
+
+    /**
+     * Get version
+     */
+    public String getVersion() {
+        return mVersion;
     }
 
     /**
@@ -117,23 +123,57 @@ public class UpdateInfo implements Parcelable, Serializable {
             return mIsNewerThanInstalled;
         }
 
-        int installedApiLevel = Utils.getInstalledApiLevel();
-        if (installedApiLevel != mApiLevel && mApiLevel > 0) {
-            mIsNewerThanInstalled = mApiLevel > installedApiLevel;
-        } else {
-            // API levels match, so compare build dates.
+        int[] installedVersion = canonicalizeVersion(Utils.getInstalledVersion(false));
+        int[] ourVersion = canonicalizeVersion(mVersion);
+
+        if (installedVersion.length < ourVersion.length) {
+            installedVersion = Arrays.copyOf(installedVersion, ourVersion.length);
+        } else if (installedVersion.length > ourVersion.length) {
+            ourVersion = Arrays.copyOf(ourVersion, installedVersion.length);
+        }
+
+        for (int i = 0; i < ourVersion.length; i++) {
+            if (ourVersion[i] > installedVersion[i]) {
+                mIsNewerThanInstalled = true;
+                break;
+            }
+            if (ourVersion[i] < installedVersion[i]) {
+                mIsNewerThanInstalled = false;
+                break;
+            }
+        }
+
+        if (mIsNewerThanInstalled == null) {
+            // Version strings match, so compare build dates.
             mIsNewerThanInstalled = mBuildDate > Utils.getInstalledBuildDate();
         }
 
         return mIsNewerThanInstalled;
     }
 
+    private int[] canonicalizeVersion(String versionString) {
+        String[] parts = versionString.split("\\.");
+        int[] version = new int[parts.length];
+
+        for (int i = 0; i < parts.length; i++) {
+            try {
+                version[i] = Integer.valueOf(parts[i]);
+            } catch (NumberFormatException e) {
+                version[i] = 0;
+            }
+        }
+
+        return version;
+    }
+
     private void initializeName(String fileName) {
         mFileName = fileName;
         if (!TextUtils.isEmpty(fileName)) {
             mUiName = extractUiName(fileName);
+            mVersion = fileName.replaceAll(".*?([0-9.]+?)-.+","$1");
         } else {
             mUiName = null;
+            mVersion = null;
         }
     }
 
@@ -185,8 +225,8 @@ public class UpdateInfo implements Parcelable, Serializable {
     public void writeToParcel(Parcel out, int flags) {
         out.writeString(mUiName);
         out.writeString(mFileName);
+        out.writeString(mVersion);
         out.writeString(mType.toString());
-        out.writeInt(mApiLevel);
         out.writeLong(mBuildDate);
         out.writeString(mDownloadUrl);
         out.writeString(mMd5Sum);
@@ -196,8 +236,8 @@ public class UpdateInfo implements Parcelable, Serializable {
     private void readFromParcel(Parcel in) {
         mUiName = in.readString();
         mFileName = in.readString();
+        mVersion = in.readString();
         mType = Enum.valueOf(Type.class, in.readString());
-        mApiLevel = in.readInt();
         mBuildDate = in.readLong();
         mDownloadUrl = in.readString();
         mMd5Sum = in.readString();
