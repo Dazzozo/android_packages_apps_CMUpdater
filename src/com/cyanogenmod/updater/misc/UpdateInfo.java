@@ -230,7 +230,8 @@ public class UpdateInfo implements Parcelable, Serializable {
         out.writeLong(mBuildDate);
         out.writeString(mDownloadUrl);
         out.writeString(mMd5Sum);
-        out.writeString(mChangeLog);
+        // mChangeLog can be larger than the maximum binder transaction size,
+        // so deliberately leaving it out here
     }
 
     private void readFromParcel(Parcel in) {
@@ -241,6 +242,5 @@ public class UpdateInfo implements Parcelable, Serializable {
         mBuildDate = in.readLong();
         mDownloadUrl = in.readString();
         mMd5Sum = in.readString();
-        mChangeLog = in.readString();
     }
 }
