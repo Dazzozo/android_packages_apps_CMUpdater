@@ -33,9 +33,7 @@ import com.cyanogenmod.updater.misc.UpdateInfo;
 import com.cyanogenmod.updater.utils.MD5;
 import com.cyanogenmod.updater.utils.Utils;
 
-import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 
 public class DownloadReceiver extends BroadcastReceiver{
@@ -81,9 +79,6 @@ public class DownloadReceiver extends BroadcastReceiver{
             Log.d(TAG, "UpdateFolder created");
         }
 
-        // Save the Changelog content to the sdcard for later use
-        writeLogFile(ui.getFileName(), ui.getChangeLog());
-
         // Build the name of the file to download, adding .partial at the end.  It will get
         // stripped off when the download completes
         String fullFilePath = "file://" + directory.getAbsolutePath() + "/" + ui.getFileName() + ".partial";
@@ -119,21 +114,6 @@ public class DownloadReceiver extends BroadcastReceiver{
         Intent intent = new Intent(ACTION_DOWNLOAD_STARTED);
         intent.putExtra(DownloadManager.EXTRA_DOWNLOAD_ID, downloadId);
         context.sendBroadcast(intent);
-    }
-
-    private void writeLogFile(String fileName, String log) {
-        if (log == null) {
-            return;
-        }
-
-        File logFile = new File(Utils.makeUpdateFolder(), fileName + ".changelog");
-        try {
-            BufferedWriter bw = new BufferedWriter(new FileWriter(logFile));
-            bw.write(log);
-            bw.close();
-        } catch (IOException e) {
-            Log.e(TAG, "File write failed", e);
-        }
     }
 
     private void handleDownloadComplete(Context context, SharedPreferences prefs, long id) {
@@ -192,12 +172,6 @@ public class DownloadReceiver extends BroadcastReceiver{
                     updateFile.delete();
                 }
 
-                // Remove the log file if it exists
-                File logFileToDelete = new File(completedFileFullPath + ".changelog");
-                if (logFileToDelete.exists()) {
-                    logFileToDelete.delete();
-                }
-
                 failureMessageResId = R.string.md5_verification_failed;
             }
         } else if (status == DownloadManager.STATUS_FAILED) {
@@ -209,8 +183,8 @@ public class DownloadReceiver extends BroadcastReceiver{
 
         // Clear the shared prefs
         prefs.edit()
-                .putString(Constants.DOWNLOAD_MD5, "")
-                .putLong(Constants.DOWNLOAD_ID, -1)
+                .remove(Constants.DOWNLOAD_MD5)
+                .remove(Constants.DOWNLOAD_ID)
                 .apply();
 
         c.close();
@@ -225,7 +199,7 @@ public class DownloadReceiver extends BroadcastReceiver{
         } else {
             // Get the notification ready
             PendingIntent contentIntent = PendingIntent.getActivity(context, 1,
-                    updateIntent, PendingIntent.FLAG_ONE_SHOT);
+                    updateIntent, PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_UPDATE_CURRENT);
             Notification.Builder builder = new Notification.Builder(context)
                     .setSmallIcon(R.drawable.cm_updater)
                     .setWhen(System.currentTimeMillis())

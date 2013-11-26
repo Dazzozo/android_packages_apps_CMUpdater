@@ -12,8 +12,10 @@ package com.cyanogenmod.updater;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.net.Uri;
 import android.preference.Preference;
 import android.preference.PreferenceActivity;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.View.OnLongClickListener;
@@ -24,6 +26,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.cyanogenmod.updater.misc.UpdateInfo;
+
+import java.io.File;
 
 public class UpdatePreference extends Preference implements OnClickListener, OnLongClickListener {
     private static final float DISABLED_ALPHA = 0.4f;
@@ -126,26 +130,40 @@ public class UpdatePreference extends Preference implements OnClickListener, OnL
 
     @Override
     public void onClick(View v) {
-        final String changeLog = mUpdateInfo.getChangeLog();
         final Context context = getContext();
+        final File changeLog = mUpdateInfo.getChangeLogFile(context);
 
-        if (changeLog == null) {
+        if (!changeLog.exists()) {
             // Change log could not be fetched
             Toast.makeText(context, R.string.failed_to_load_changelog, Toast.LENGTH_SHORT).show();
-        } else if (changeLog.isEmpty()) {
+        } else if (changeLog.length() == 0) {
             // Change log is empty
             Toast.makeText(context, R.string.no_changelog_alert, Toast.LENGTH_SHORT).show();
         } else {
             // Prepare the dialog box content
-            WebView changeLogView = new WebView(context);
+            final LayoutInflater inflater = LayoutInflater.from(context);
+            final View view = inflater.inflate(R.layout.change_log_dialog, null);
+            final View progressContainer = view.findViewById(R.id.progress);
+            final NotifyingWebView changeLogView =
+                    (NotifyingWebView) view.findViewById(R.id.changelog);
+
+            changeLogView.setOnInitialContentReadyListener(
+                    new NotifyingWebView.OnInitialContentReadyListener() {
+                @Override
+                public void onInitialContentReady(WebView webView) {
+                    progressContainer.setVisibility(View.GONE);
+                    changeLogView.setVisibility(View.VISIBLE);
+                }
+            });
             changeLogView.getSettings().setTextZoom(80);
-            changeLogView.setBackgroundColor(context.getResources().getColor(android.R.color.darker_gray));
-            changeLogView.loadDataWithBaseURL(null, changeLog, "text/html", "utf-8", null);
+            changeLogView.setBackgroundColor(
+                    context.getResources().getColor(android.R.color.darker_gray));
+            changeLogView.loadUrl(Uri.fromFile(changeLog).toString());
 
             // Prepare the dialog box
             new AlertDialog.Builder(context)
                     .setTitle(R.string.changelog_dialog_title)
-                    .setView(changeLogView)
+                    .setView(view)
                     .setPositiveButton(R.string.dialog_close, null)
                     .show();
         }

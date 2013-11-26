@@ -21,6 +21,7 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.database.Cursor;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
@@ -48,11 +49,8 @@ import com.cyanogenmod.updater.service.UpdateCheckService;
 import com.cyanogenmod.updater.utils.UpdateFilter;
 import com.cyanogenmod.updater.utils.Utils;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
@@ -110,6 +108,9 @@ public class UpdatesSettings extends PreferenceActivity implements
                     if (count == 0) {
                         Toast.makeText(UpdatesSettings.this, R.string.no_updates_found,
                                 Toast.LENGTH_SHORT).show();
+                    } else if (count < 0) {
+                        Toast.makeText(UpdatesSettings.this, R.string.update_check_failed,
+                                Toast.LENGTH_LONG).show();
                     }
                 }
                 updateLayout();
@@ -223,10 +224,24 @@ public class UpdatesSettings extends PreferenceActivity implements
             Utils.scheduleUpdateService(this, value * 1000);
             return true;
         } else if (preference == mUpdateType) {
-            int value = Integer.valueOf((String) newValue);
-            mPrefs.edit().putInt(Constants.UPDATE_TYPE_PREF, value).apply();
-            mUpdateType.setSummary(mUpdateType.getEntries()[value]);
-            checkForUpdates();
+            final int value = Integer.valueOf((String) newValue);
+            if (value == Constants.UPDATE_TYPE_NEW_NIGHTLY
+                    || value == Constants.UPDATE_TYPE_ALL_NIGHTLY) {
+                new AlertDialog.Builder(this)
+                    .setTitle(R.string.nightly_alert_title)
+                    .setMessage(R.string.nightly_alert)
+                    .setPositiveButton(getString(R.string.dialog_ok),
+                            new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int id) {
+                            updateUpdatesType(value);
+                        }
+                    })
+                    .setNegativeButton(R.string.dialog_cancel, null)
+                    .show();
+                return false;
+            } else {
+                updateUpdatesType(value);
+            }
             return true;
         }
 
@@ -244,21 +259,19 @@ public class UpdatesSettings extends PreferenceActivity implements
             if (c == null || !c.moveToFirst()) {
                 Toast.makeText(this, R.string.download_not_found, Toast.LENGTH_LONG).show();
             } else {
-                String fileName = c.getString(c.getColumnIndex(DownloadManager.COLUMN_LOCAL_FILENAME));
                 int status = c.getInt(c.getColumnIndex(DownloadManager.COLUMN_STATUS));
-                if (fileName != null) {
-                    if (status == DownloadManager.STATUS_PENDING
-                            || status == DownloadManager.STATUS_RUNNING
-                            || status == DownloadManager.STATUS_PAUSED) {
-                        File file = new File(fileName);
-                        mFileName = file.getName().replace(".partial", "");
-                    }
+                Uri uri = Uri.parse(c.getString(c.getColumnIndex(DownloadManager.COLUMN_URI)));
+                if (status == DownloadManager.STATUS_PENDING
+                        || status == DownloadManager.STATUS_RUNNING
+                        || status == DownloadManager.STATUS_PAUSED) {
+                    mFileName = uri.getLastPathSegment();
                 }
             }
             if (c != null) {
                 c.close();
             }
-        } else {
+        }
+        if (mDownloadId < 0 || mFileName == null) {
             resetDownloadState();
         }
 
@@ -353,9 +366,13 @@ public class UpdatesSettings extends PreferenceActivity implements
                     int totalBytes = cursor.getInt(
                         cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
 
-                    progressBar.setIndeterminate(totalBytes < 0);
-                    progressBar.setMax(totalBytes);
-                    progressBar.setProgress(downloadedBytes);
+                    if (totalBytes < 0) {
+                        progressBar.setIndeterminate(true);
+                    } else {
+                        progressBar.setIndeterminate(false);
+                        progressBar.setMax(totalBytes);
+                        progressBar.setProgress(downloadedBytes);
+                    }
                     break;
                 case DownloadManager.STATUS_FAILED:
                     mDownloadingPreference.setStyle(UpdatePreference.STYLE_NEW);
@@ -374,7 +391,9 @@ public class UpdatesSettings extends PreferenceActivity implements
 
     @Override
     public void onStopDownload(final UpdatePreference pref) {
-        if (!mDownloading || mFileName == null) {
+        if (!mDownloading || mFileName == null || mDownloadId < 0) {
+            pref.setStyle(UpdatePreference.STYLE_NEW);
+            resetDownloadState();
             return;
         }
 
@@ -394,8 +413,8 @@ public class UpdatesSettings extends PreferenceActivity implements
 
                         // Clear the stored data from shared preferences
                         mPrefs.edit()
-                                .putLong(Constants.DOWNLOAD_ID, mDownloadId)
-                                .putString(Constants.DOWNLOAD_MD5, "")
+                                .remove(Constants.DOWNLOAD_ID)
+                                .remove(Constants.DOWNLOAD_MD5)
                                 .apply();
 
                         Toast.makeText(UpdatesSettings.this,
@@ -404,6 +423,12 @@ public class UpdatesSettings extends PreferenceActivity implements
                 })
                 .setNegativeButton(R.string.dialog_cancel, null)
                 .show();
+    }
+
+    private void updateUpdatesType(int type) {
+        mPrefs.edit().putInt(Constants.UPDATE_TYPE_PREF, type).apply();
+        mUpdateType.setSummary(mUpdateType.getEntries()[type]);
+        checkForUpdates();
     }
 
     private void checkForDownloadCompleted(Intent intent) {
@@ -487,12 +512,11 @@ public class UpdatesSettings extends PreferenceActivity implements
 
     private void updateLayout() {
         // Read existing Updates
-        ArrayList<String> existingFiles = new ArrayList<String>();
+        LinkedList<String> existingFiles = new LinkedList<String>();
 
         mUpdateFolder = Utils.makeUpdateFolder();
         File[] files = mUpdateFolder.listFiles(new UpdateFilter(".zip"));
 
-        // If Folder Exists and Updates are present(with md5files)
         if (mUpdateFolder.exists() && mUpdateFolder.isDirectory() && files != null) {
             for (File file : files) {
                 if (file.isFile()) {
@@ -506,10 +530,10 @@ public class UpdatesSettings extends PreferenceActivity implements
 
         // Build list of updates
         LinkedList<UpdateInfo> availableUpdates = State.loadState(this);
-        LinkedList<UpdateInfo> updates = new LinkedList<UpdateInfo>();
+        final LinkedList<UpdateInfo> updates = new LinkedList<UpdateInfo>();
 
         for (String fileName : existingFiles) {
-            updates.add(new UpdateInfo(fileName, readLogFile(fileName)));
+            updates.add(new UpdateInfo(fileName));
         }
         for (UpdateInfo update : availableUpdates) {
             // Only add updates to the list that are not already downloaded
@@ -529,26 +553,30 @@ public class UpdatesSettings extends PreferenceActivity implements
 
         // Update the preference list
         refreshPreferences(updates);
-    }
 
-    private String readLogFile(String fileName) {
-        StringBuilder text = new StringBuilder();
+        // Prune obsolete change log files
+        new Thread() {
+            @Override
+            public void run() {
+                File[] files = getCacheDir().listFiles(new UpdateFilter(".changelog"));
+                if (files == null) {
+                    return;
+                }
 
-        File logFile = new File(mUpdateFolder, fileName + ".changelog");
-        try {
-            BufferedReader br = new BufferedReader(new FileReader(logFile));
-            String line;
-
-            while ((line = br.readLine()) != null) {
-                text.append(line);
-                text.append('\n');
+                for (File file : files) {
+                    boolean updateExists = false;
+                    for (UpdateInfo info : updates) {
+                        if (file.getName().startsWith(info.getFileName())) {
+                            updateExists = true;
+                            break;
+                        }
+                    }
+                    if (!updateExists) {
+                        file.delete();
+                    }
+                }
             }
-            br.close();
-        } catch (IOException e) {
-            return null;
-        }
-
-        return text.toString();
+        }.start();
     }
 
     private void refreshPreferences(LinkedList<UpdateInfo> updates) {
@@ -611,17 +639,12 @@ public class UpdatesSettings extends PreferenceActivity implements
 
         if (mUpdateFolder.exists() && mUpdateFolder.isDirectory()) {
             File zipFileToDelete = new File(mUpdateFolder, fileName);
-            File logFileToDelete = new File(mUpdateFolder, fileName + ".changelog");
 
             if (zipFileToDelete.exists()) {
                 zipFileToDelete.delete();
             } else {
                 Log.d(TAG, "Update to delete not found");
                 return;
-            }
-
-            if (logFileToDelete.exists()) {
-                logFileToDelete.delete();
             }
 
             String message = getString(R.string.delete_single_update_success_message, fileName);
